@@ -191,6 +191,52 @@ export const amendmentsSince = async (
 	return [...seen.values()];
 };
 
+export interface Version {
+	aktId: number;
+	from: string;
+	/** Exclusive; empty for the wording in force today. */
+	until: string;
+}
+
+/**
+ * Every wording the act has had, oldest first.
+ *
+ * Riigi Teataja publishes amendment history per provision, not per act, so an act-level version
+ * list has to be derived: each wording is identified by its own aktId, and its validity runs from
+ * the date it took effect until the next wording took effect. Reading the per-provision
+ * `kehtivuseLopp` instead would be wrong — a section that was never amended carries an open range
+ * even in a wording that was superseded years ago.
+ */
+export const listVersions = async (actId: number): Promise<Version[]> => {
+	const detail = (await (await get(`/akt/${actId}`)).json()) as {grupiId?: number};
+	if (!detail.grupiId) return [];
+	const history = (await (await get(`/akt/ajalugu/${detail.grupiId}`)).json()) as HistoryEntry[];
+
+	const startOf = new Map<number, string>();
+	for (const entry of history) {
+		for (const k of entry.kirjed) {
+			const from = (k.kehtivuseAlgus ?? '').slice(0, 10);
+			if (!from) continue;
+			const prev = startOf.get(k.aktId);
+			if (!prev || from < prev) startOf.set(k.aktId, from);
+		}
+	}
+
+	const sorted = [...startOf.entries()]
+		.map(([aktId, from]) => ({aktId, from}))
+		.sort((a, b) => a.from.localeCompare(b.from) || a.aktId - b.aktId);
+
+	return sorted.map((v, i) => ({...v, until: sorted[i + 1]?.from ?? ''}));
+};
+
+/** The wording in force on `date`, or null if the act predates it. */
+export const versionAt = (versions: Version[], date: string): Version | null => {
+	const d = date.slice(0, 10);
+	let found: Version | null = null;
+	for (const v of versions) if (v.from <= d) found = v;
+	return found;
+};
+
 export interface StatuteResult {
 	header: string;
 	body: string;
@@ -201,6 +247,8 @@ export const getStatute = async (opts: {
 	abbrev: string;
 	paragraph?: string;
 	changedSince?: string;
+	asOf?: string;
+	listVersions?: boolean;
 }): Promise<StatuteResult> => {
 	const act = await resolveAct(opts.abbrev);
 	if (!act) {
@@ -211,10 +259,48 @@ export const getStatute = async (opts: {
 		};
 	}
 
-	const text = await actText(act.id);
+	// `as_of` reads the wording in force on that date rather than today's. This is the difference
+	// between quoting the law and quoting the law the court actually applied.
+	let readId = act.id;
+	let asOfNote = '';
+	if (opts.asOf || opts.listVersions) {
+		const versions = await listVersions(act.id).catch(() => [] as Version[]);
+
+		if (opts.listVersions && versions.length) {
+			const lines = versions
+				.map((v) => `  ${v.from} - ${v.until || 'in force'}${v.aktId === act.id ? '  (current)' : ''}`)
+				.join('\n');
+			return {
+				header: `${act.abbrev} — ${act.title}: ${versions.length} wordings`,
+				body: lines,
+			};
+		}
+
+		if (opts.asOf) {
+			const v = versionAt(versions, opts.asOf);
+			if (!v) {
+				return {
+					header: `${act.abbrev} — ${act.title}`,
+					body: '',
+					warning:
+						`No wording of ${act.abbrev} was in force on ${opts.asOf.slice(0, 10)}` +
+						(versions.length ? `; the earliest is ${versions[0].from}.` : '.'),
+				};
+			}
+			readId = v.aktId;
+			asOfNote =
+				`Wording in force on ${opts.asOf.slice(0, 10)} (effective ${v.from}` +
+				`${v.until ? `, superseded ${v.until}` : ', still in force'}).`;
+		}
+	}
+
+	const text = await actText(readId);
 	const nums = paragraphNumbers(text);
 	const range = nums.length ? `§ ${nums[0]}-${nums[nums.length - 1]}` : 'no paragraphs found';
-	const header = `${act.abbrev} — ${act.title} (current consolidated text, ${range})`;
+	const header =
+		`${act.abbrev} — ${act.title} ` +
+		`(${opts.asOf ? 'historical' : 'current'} consolidated text, ${range})` +
+		(asOfNote ? `\n${asOfNote}` : '');
 
 	if (!opts.paragraph) {
 		return {header, body: text.slice(0, 20_000)};

@@ -436,8 +436,9 @@ export const buildMcpServer = (): McpServer => {
 				'what it is numbered, or where an act ends.** If the paragraph does not exist the tool ' +
 				'says so, which is the answer that prevents citing a provision that was never enacted. ' +
 				'Pass `changed_since` with a decision\'s date to find out whether the provision has been ' +
-				'amended since it was decided — a judgment is decided under the wording then in force, ' +
-				'and quoting today\'s text at it is a substantive error.',
+				'amended since it was decided, or `as_of` to read that older wording directly — a ' +
+				'judgment is decided under the wording then in force, and quoting today\'s text at it ' +
+				'is a substantive error. `list_versions` shows every wording the act has had.',
 			inputSchema: {
 				abbrev: z
 					.string()
@@ -453,14 +454,27 @@ export const buildMcpServer = (): McpServer => {
 						'ISO date, normally the date of the decision being read, e.g. "2023-05-17". ' +
 							'Reports amendments that took effect after it.',
 					),
+				as_of: z
+					.string()
+					.optional()
+					.describe(
+						'ISO date. Returns the wording in force on that date instead of today\'s — use the ' +
+							'decision\'s date when reading what a court actually applied.',
+					),
+				list_versions: z
+					.boolean()
+					.optional()
+					.describe('List every wording the act has had, with the dates each was in force.'),
 			},
 		},
-		async ({abbrev, paragraph, changed_since}) => {
+		async ({abbrev, paragraph, changed_since, as_of, list_versions}) => {
 			try {
 				const {header, body, warning} = await getStatute({
 					abbrev,
 					paragraph,
 					changedSince: changed_since,
+					asOf: as_of,
+					listVersions: list_versions,
 				});
 				return {
 					content: [
