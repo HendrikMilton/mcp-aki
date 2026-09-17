@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {AKI, RT, getDocText, loadIndex} from './lib/store';
 import {excerptDocument} from './lib/excerpt';
 import {matchesFilters, search} from './lib/search';
+import {getStatute} from './lib/statute';
 import type {Category, CourtDoc, Doc} from './types';
 
 const CATEGORY_ENUM = z.enum(['ettekirjutused', 'vaideotsused', 'seisukohad']);
@@ -418,6 +419,68 @@ export const buildMcpServer = (): McpServer => {
 				.join(' ');
 
 			return {content: [{type: 'text' as const, text: `${header}\n\n${body}`}]};
+		},
+	);
+
+	// -------------------------------------------------------------------------
+	// Riigi Teataja — the statutes themselves
+	// -------------------------------------------------------------------------
+
+	server.registerTool(
+		'get_statute',
+		{
+			title: 'Get the text of an Estonian statute',
+			description:
+				'Fetch the current consolidated text of an Estonian act from Riigi Teataja, which is the ' +
+				'authoritative publisher — not a copy. **Use this before stating what a provision says, ' +
+				'what it is numbered, or where an act ends.** If the paragraph does not exist the tool ' +
+				'says so, which is the answer that prevents citing a provision that was never enacted. ' +
+				'Pass `changed_since` with a decision\'s date to find out whether the provision has been ' +
+				'amended since it was decided — a judgment is decided under the wording then in force, ' +
+				'and quoting today\'s text at it is a substantive error.',
+			inputSchema: {
+				abbrev: z
+					.string()
+					.describe('Act abbreviation as Estonian lawyers write it, e.g. "AvTS", "KrMS", "IKS".'),
+				paragraph: z
+					.string()
+					.optional()
+					.describe('Paragraph number, e.g. "35". Omit for the whole act (truncated).'),
+				changed_since: z
+					.string()
+					.optional()
+					.describe(
+						'ISO date, normally the date of the decision being read, e.g. "2023-05-17". ' +
+							'Reports amendments that took effect after it.',
+					),
+			},
+		},
+		async ({abbrev, paragraph, changed_since}) => {
+			try {
+				const {header, body, warning} = await getStatute({
+					abbrev,
+					paragraph,
+					changedSince: changed_since,
+				});
+				return {
+					content: [
+						{type: 'text' as const, text: [header, warning, body].filter(Boolean).join('\n\n')},
+					],
+				};
+			} catch (err) {
+				// Riigi Teataja being unreachable must not look like "the provision does not exist".
+				return {
+					content: [
+						{
+							type: 'text' as const,
+							text:
+								`Could not reach Riigi Teataja: ${String(err).slice(0, 160)}. ` +
+								`Do not answer from memory about what this provision says — say it could not be checked.`,
+						},
+					],
+					isError: true,
+				};
+			}
 		},
 	);
 
