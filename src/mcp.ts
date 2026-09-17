@@ -75,6 +75,20 @@ const summariseCourtDoc = (doc: CourtDoc): string =>
 /** Past this many results the verbose form is too long to survive intact. */
 const COMPACT_THRESHOLD = 20;
 
+/**
+ * What the index actually holds right now, stated from the index itself rather than written into
+ * the tool description — the court corpus is built in batches, so any hardcoded figure is wrong by
+ * the next run. Without this the model reads "no results" as "no such case law exists", when the
+ * honest reading is often "not ingested yet".
+ */
+const coverage = (docs: {date?: string; year: number}[]): string => {
+	if (docs.length === 0) return 'Index is empty.';
+	const years = docs.map((d) => d.year).filter((y) => y > 0);
+	const from = Math.min(...years);
+	const to = Math.max(...years);
+	return `Corpus: ${docs.length} decisions, ${from}-${to}.`;
+};
+
 export const buildMcpServer = (): McpServer => {
 	const server = new McpServer({name: 'eesti-andmekaitse', version: '2.0.0'});
 
@@ -132,9 +146,10 @@ export const buildMcpServer = (): McpServer => {
 				content: [
 					{
 						type: 'text' as const,
-						text: `${hits.length} passages — excerpts only, not the whole decision. Before citing any ` +
+						text:
+							`${hits.length} passages — excerpts only, not the whole decision. Before citing any ` +
 							`paragraph number or statute section, confirm it with get_decision ` +
-							`(pass a pattern to check one citation).\n\n${text}`,
+							`(pass a pattern to check one citation).\n${coverage(index.docs)}\n\n${text}`,
 					},
 				],
 			};
@@ -269,7 +284,17 @@ export const buildMcpServer = (): McpServer => {
 			);
 
 			if (hits.length === 0) {
-				return {content: [{type: 'text' as const, text: 'No matching court decisions.'}]};
+				return {
+					content: [
+						{
+							type: 'text' as const,
+							text:
+								`No matching court decisions. ${coverage(index.docs)} Ingest is still in ` +
+								`progress and runs newest-first, so this does not mean no such case law ` +
+								`exists — try different wording, then say the corpus did not cover it.`,
+						},
+					],
+				};
 			}
 
 			const text = hits
@@ -288,7 +313,10 @@ export const buildMcpServer = (): McpServer => {
 						text:
 							`${hits.length} passages — excerpts only, not the whole decision. Before citing any ` +
 							`paragraph number or statute section, confirm it with get_court_decision ` +
-							`(pass a pattern to check one citation).\n\n${text}`,
+							`(pass a pattern to check one citation).\n` +
+							`${coverage(index.docs)} Ingest is still in progress and runs newest-first, so ` +
+							`absence here is not evidence that no such case law exists — say that rather ` +
+							`than concluding the courts have not ruled on it.\n\n${text}`,
 					},
 				],
 			};
