@@ -1,0 +1,29 @@
+{
+  "name": "mcp-aki",
+  "version": "1.0.0",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.699.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.699.0",
+    "@aws-sdk/client-s3": "^3.699.0",
+    "@aws-sdk/client-textract": "^3.1133.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "pdf-parse": "^1.1.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^20.11.0",
+    "@types/pdf-parse": "^1.1.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:lambda": "./scripts/build-lambda.sh",
+    "crawl": "ts-node src/ingest/crawl.ts",
+    "ingest": "ts-node src/ingest/build.ts",
+    "start": "ts-node src/local.ts"
+  }
+}
