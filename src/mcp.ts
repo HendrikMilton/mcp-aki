@@ -1,6 +1,7 @@
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {AKI, RT, getDocText, loadIndex} from './lib/store';
+import {excerptDocument} from './lib/excerpt';
 import {matchesFilters, search} from './lib/search';
 import type {Category, CourtDoc, Doc} from './types';
 
@@ -131,7 +132,9 @@ export const buildMcpServer = (): McpServer => {
 				content: [
 					{
 						type: 'text' as const,
-						text: `${hits.length} passages. Use get_decision with the [id] for full text.\n\n${text}`,
+						text: `${hits.length} passages — excerpts only, not the whole decision. Before citing any ` +
+							`paragraph number or statute section, confirm it with get_decision ` +
+							`(pass a pattern to check one citation).\n\n${text}`,
 					},
 				],
 			};
@@ -142,10 +145,31 @@ export const buildMcpServer = (): McpServer => {
 		'get_decision',
 		{
 			title: 'Get full AKI decision text',
-			description: 'Fetch the full text of one AKI decision by the id returned from search_decisions.',
-			inputSchema: {id: z.string().describe('Decision id, e.g. "a1b2c3d4e5".')},
+			description:
+				'Fetch one AKI decision by the id returned from search_decisions. Returns the full text ' +
+				'by default. **Call this before citing a paragraph number or a statute section** — ' +
+				'search returns passages, not the whole decision. Pass `pattern` to verify one ' +
+				'citation, or `section` to read one part.',
+			inputSchema: {
+				id: z.string().describe('Decision id, e.g. "a1b2c3d4e5".'),
+				pattern: z
+					.string()
+					.optional()
+					.describe(
+						'Return only passages containing this literal text, with surrounding context. ' +
+							'Use it to verify a citation before repeating it, e.g. "KrMS § 64" — if the ' +
+							'pattern is absent the tool says so, which means the decision does not say it.',
+					),
+				section: z
+					.string()
+					.optional()
+					.describe(
+						'Return only one section, matched on its ALL-CAPS heading, e.g. ' +
+							'"RINGKONNAKOHTU SEISUKOHT" or "RESOLUTSIOON".',
+					),
+			},
 		},
-		async ({id}) => {
+		async ({id, pattern, section}) => {
 			const {index} = await loadIndex(AKI);
 			const doc = index.docs.find((d) => d.id === id);
 			if (!doc) {
@@ -154,8 +178,15 @@ export const buildMcpServer = (): McpServer => {
 					isError: true,
 				};
 			}
-			const body = await getDocText(AKI, id);
-			return {content: [{type: 'text' as const, text: `${describeDoc(doc)}\n\n${body}`}]};
+			const {text, note} = excerptDocument(await getDocText(AKI, id), {pattern, section});
+			return {
+				content: [
+					{
+						type: 'text' as const,
+						text: [describeDoc(doc), note, text].filter(Boolean).join('\n\n'),
+					},
+				],
+			};
 		},
 	);
 
@@ -255,7 +286,9 @@ export const buildMcpServer = (): McpServer => {
 					{
 						type: 'text' as const,
 						text:
-							`${hits.length} passages. Use get_court_decision with the [id] for full text.\n\n${text}`,
+							`${hits.length} passages — excerpts only, not the whole decision. Before citing any ` +
+							`paragraph number or statute section, confirm it with get_court_decision ` +
+							`(pass a pattern to check one citation).\n\n${text}`,
 					},
 				],
 			};
@@ -267,10 +300,31 @@ export const buildMcpServer = (): McpServer => {
 		{
 			title: 'Get full court decision text',
 			description:
-				'Fetch the full text of one court decision by the id returned from search_court_decisions.',
-			inputSchema: {id: z.string().describe('Decision id, as returned in [brackets].')},
+				'Fetch one court decision by the id returned from search_court_decisions. Returns the ' +
+				'full text by default. **Call this before citing a paragraph number or a statute ' +
+				'section**: search returns passages, not the whole decision, and a provision that ' +
+				'looks like it belongs may not be in the text at all. Pass `pattern` to check one ' +
+				'citation cheaply, or `section` to read just the reasoning.',
+			inputSchema: {
+				id: z.string().describe('Decision id, as returned in [brackets].'),
+				pattern: z
+					.string()
+					.optional()
+					.describe(
+						'Return only passages containing this literal text, with surrounding context. ' +
+							'Use it to verify a citation before repeating it, e.g. "KrMS § 64" — if the ' +
+							'pattern is absent the tool says so, which means the decision does not say it.',
+					),
+				section: z
+					.string()
+					.optional()
+					.describe(
+						'Return only one section, matched on its ALL-CAPS heading, e.g. ' +
+							'"RINGKONNAKOHTU SEISUKOHT" or "RESOLUTSIOON".',
+					),
+			},
 		},
-		async ({id}) => {
+		async ({id, pattern, section}) => {
 			const {index} = await loadIndex(RT);
 			const doc = index.docs.find((d) => d.id === id);
 			if (!doc) {
@@ -279,8 +333,15 @@ export const buildMcpServer = (): McpServer => {
 					isError: true,
 				};
 			}
-			const body = await getDocText(RT, id);
-			return {content: [{type: 'text' as const, text: `${describeCourtDoc(doc)}\n\n${body}`}]};
+			const {text, note} = excerptDocument(await getDocText(RT, id), {pattern, section});
+			return {
+				content: [
+					{
+						type: 'text' as const,
+						text: [describeCourtDoc(doc), note, text].filter(Boolean).join('\n\n'),
+					},
+				],
+			};
 		},
 	);
 
