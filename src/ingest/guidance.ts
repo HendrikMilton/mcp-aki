@@ -177,6 +177,12 @@ export const fileLinks = (html: string, pageUrl: string): string[] => {
 const cachePath = (kind: 'html' | 'file' | 'text', id: string, ext: string): string =>
 	join(DATA, kind, `${id}.${ext}`);
 
+/** The parent page's cached HTML, for dating an attachment that carries no date itself. */
+const parentHtml = (url: string): string => {
+	const path = cachePath('html', idOf(url), 'html');
+	return existsSync(path) ? readFileSync(path, 'utf8') : '';
+};
+
 const ensureDirs = (): void => {
 	for (const kind of ['html', 'file', 'text']) mkdirSync(join(DATA, kind), {recursive: true});
 };
@@ -199,11 +205,26 @@ export interface CrawlStats {
 }
 
 /**
- * Year, best effort. Uploads live under /sites/default/files/documents/YYYY-MM/, and HTML pages
- * print "Last updated: dd.mm.yyyy". Neither is guaranteed, so 0 means unknown rather than old —
- * a yearFrom filter must not silently hide a document whose date the site never published.
+ * Publication date from the page itself.
+ *
+ * News pages carry no JSON-LD, no <time> and no OpenGraph date — the only signal is the byline
+ * Drupal renders under the title as <p class="card-text vp-date">29.11.2023 | 00:00</p>. Without it
+ * every one of the 317 news items indexed with year 0, which is exactly the gap that stops the
+ * corpus ordering a guidance release against the ruling that followed it.
  */
-export const yearOf = (url: string, text = ''): number => {
+export const dateOf = (html: string): string | undefined => {
+	const m = /class="[^"]*\bvp-date\b[^"]*"[^>]*>\s*(\d{2})\.(\d{2})\.(\d{4})/i.exec(html);
+	return m ? `${m[3]}-${m[2]}-${m[1]}` : undefined;
+};
+
+/**
+ * Year, best effort, in falling order of reliability: the page's own byline, the /YYYY-MM/ upload
+ * path an attachment lives under, then the "Last updated" line. 0 means unknown rather than old — a
+ * yearFrom filter must not silently hide a document whose date the site never published.
+ */
+export const yearOf = (url: string, text = '', html = ''): number => {
+	const fromByline = dateOf(html);
+	if (fromByline) return Number(fromByline.slice(0, 4));
 	const fromPath = /\/(\d{4})-\d{2}\//.exec(url)?.[1];
 	if (fromPath) return Number(fromPath);
 	const fromText = /Last updated:\s*\d{2}\.\d{2}\.(\d{4})/i.exec(text)?.[1];
@@ -314,7 +335,8 @@ export const crawlGuidance = async (): Promise<{docs: GuidanceDoc[]; stats: Craw
 			format: 'html',
 			title: title || url,
 			chars: text.length,
-			year: yearOf(url, text),
+			year: yearOf(url, text, html),
+			date: dateOf(html),
 		});
 
 		if ((i + 1) % 50 === 0) console.log(`  pages ${i + 1}/${urls.length} (${skipped} cached)`);
@@ -373,7 +395,9 @@ export const crawlGuidance = async (): Promise<{docs: GuidanceDoc[]; stats: Craw
 			parentUrl,
 			type: typeOfFile(parents),
 			format: 'pdf',
-			year: yearOf(url, text),
+			// An attachment has no byline of its own; the page that publishes it does.
+			year: yearOf(url, text, parentHtml(parentUrl)),
+			date: dateOf(parentHtml(parentUrl)),
 			title: decodeURIComponent(url.split('/').pop()!).replace(/\.pdf$/i, '').replace(/_\d+$/, ''),
 			chars: text.length,
 		});

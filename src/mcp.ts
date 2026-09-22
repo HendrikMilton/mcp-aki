@@ -104,14 +104,16 @@ const describeGuidanceDoc = (doc: GuidanceDoc): string =>
 	[
 		`[${doc.id}] ${doc.title}`,
 		`  ${GUIDANCE_TYPE_LABELS[doc.type] ?? doc.type} · ${doc.format.toUpperCase()}` +
-			(doc.year ? ` · ${doc.year}` : ''),
+			(doc.date ? ` · ${doc.date}` : doc.year ? ` · ${doc.year}` : ' · kuupäev teadmata'),
 		`  ${doc.url}`,
 	]
 		.filter(Boolean)
 		.join('\n');
 
 const summariseGuidanceDoc = (doc: GuidanceDoc): string =>
-	[`[${doc.id}]`, doc.year || '—', doc.type, truncate(doc.title, 70)].filter(Boolean).join(' · ');
+	[`[${doc.id}]`, doc.date ?? (doc.year || '—'), doc.type, truncate(doc.title, 70)]
+		.filter(Boolean)
+		.join(' · ');
 
 /** Guidance has no case numbers, so coverage is stated by document count and type mix. */
 const guidanceCoverage = (docs: GuidanceDoc[]): string => {
