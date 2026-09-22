@@ -40,6 +40,28 @@ export interface CourtDoc {
 	url: string;
 }
 
+export type GuidanceType = 'juhend' | 'kkk' | 'news' | 'muu';
+
+/**
+ * One page or attached document from aki.ee — the regulator's own guidance rather than its
+ * decisions. Normative material, so it lives in its own index with its own tools: merged into the
+ * decision corpus, a paragraph of the üldjuhend would be cited as though it were binding.
+ */
+export interface GuidanceDoc {
+	id: string; // sha1(url).slice(0,10)
+	url: string;
+	type: GuidanceType;
+	format: 'html' | 'pdf';
+	title: string;
+	chars: number;
+	/** From the /YYYY-MM/ upload path or the page's "Last updated"; 0 when the site publishes none. */
+	year: number;
+	/** For an attachment, the page it was linked from — PDFs are not in the sitemap. */
+	parentUrl?: string;
+	date?: string; // ISO, where the page publishes one
+	pages?: number;
+}
+
 export interface Chunk {
 	docId: string;
 	section: string;

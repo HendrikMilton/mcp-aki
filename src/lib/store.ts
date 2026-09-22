@@ -1,8 +1,8 @@
 import {GetObjectCommand, PutObjectCommand, S3Client} from '@aws-sdk/client-s3';
 import {gunzipSync, gzipSync} from 'zlib';
-import type {Chunk, CourtDoc, Doc, Index} from '../types';
+import type {Chunk, CourtDoc, Doc, GuidanceDoc, Index} from '../types';
 import {EMBED_DIM} from './bedrock';
-import {type Bm25, buildBm25, chunkText, courtChunkText} from './search';
+import {type Bm25, buildBm25, chunkText, courtChunkText, guidanceChunkText} from './search';
 
 const REGION = process.env.AWS_REGION ?? 'eu-central-1';
 
@@ -34,6 +34,18 @@ export const RT: Corpus<CourtDoc> = {
 	chunkText: courtChunkText,
 };
 
+/**
+ * aki.ee's own guidance, FAQs and news — normative material rather than adjudicative, so it is a
+ * third index with its own tools. It shares the AKI bucket under a prefix: the content comes from
+ * the same site and a separate bucket would mean a terraform change for no isolation benefit.
+ */
+export const GUIDANCE: Corpus<GuidanceDoc> = {
+	name: 'guidance',
+	bucket: process.env.CORPUS_BUCKET ?? 'hycapital-aki-rag',
+	prefix: 'guidance/',
+	chunkText: guidanceChunkText,
+};
+
 /** Kept for the AKI ingest path, which writes to its own bucket. */
 export const BUCKET = AKI.bucket;
 
@@ -58,8 +70,13 @@ export const quantize = (vec: number[]): {bytes: Int8Array; scale: number} => {
 	return {bytes, scale};
 };
 
-export const writeIndex = async (
-	docs: Doc[],
+/**
+ * Write an index for any corpus. The AKI pipeline predates the Corpus descriptor and calls
+ * writeIndex below, which is now a thin wrapper.
+ */
+export const writeCorpusIndex = async <D>(
+	corpus: Corpus<D>,
+	docs: D[],
 	chunks: Chunk[],
 	vectors: number[][],
 ): Promise<void> => {
@@ -75,24 +92,21 @@ export const writeIndex = async (
 		Buffer.from(JSON.stringify({builtAt: new Date().toISOString(), dim: EMBED_DIM, docs, chunks})),
 	);
 
+	const put = (key: string, Body: Buffer) =>
+		s3.send(new PutObjectCommand({Bucket: corpus.bucket, Key: `${corpus.prefix}${key}`, Body}));
+
 	await Promise.all([
-		s3.send(new PutObjectCommand({Bucket: AKI.bucket, Key: 'index/meta.json.gz', Body: meta})),
-		s3.send(
-			new PutObjectCommand({
-				Bucket: AKI.bucket,
-				Key: 'index/vectors.i8',
-				Body: Buffer.from(bytes.buffer),
-			}),
-		),
-		s3.send(
-			new PutObjectCommand({
-				Bucket: AKI.bucket,
-				Key: 'index/scales.f32',
-				Body: Buffer.from(scales.buffer),
-			}),
-		),
+		put('index/meta.json.gz', meta),
+		put('index/vectors.i8', Buffer.from(bytes.buffer)),
+		put('index/scales.f32', Buffer.from(scales.buffer)),
 	]);
 };
+
+export const writeIndex = async (
+	docs: Doc[],
+	chunks: Chunk[],
+	vectors: number[][],
+): Promise<void> => writeCorpusIndex(AKI, docs, chunks, vectors);
 
 export interface Loaded<D> {
 	index: Index<D>;

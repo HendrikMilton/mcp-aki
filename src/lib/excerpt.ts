@@ -18,6 +18,12 @@ export const FULL_TEXT_LIMIT = 120_000;
 export interface ExcerptOptions {
 	pattern?: string;
 	section?: string;
+	/**
+	 * Heading pattern for section slicing. Defaults to the ALL-CAPS decision skeleton; the guidance
+	 * corpus passes NUMBERED_HEADING_RE, whose documents have no ALL-CAPS headings at all — without
+	 * this, get_guidance's `section` argument could never match anything.
+	 */
+	headingRe?: RegExp;
 }
 
 export interface Excerpted {
@@ -28,9 +34,10 @@ export interface Excerpted {
 /** ALL-CAPS heading lines, the same skeleton the chunker splits on. */
 const SECTION_RE = /^[ \t]*([A-ZÄÖÜÕŠŽ][A-ZÄÖÜÕŠŽ \-,]{4,})[ \t]*$/gm;
 
-const sliceSection = (text: string, wanted: string): string | null => {
+const sliceSection = (text: string, wanted: string, headingRe = SECTION_RE): string | null => {
 	const want = wanted.trim().toUpperCase();
-	const heads = [...text.matchAll(SECTION_RE)];
+	headingRe.lastIndex = 0;
+	const heads = [...text.matchAll(headingRe)];
 	const at = heads.findIndex((h) => h[1].trim().toUpperCase().includes(want));
 	if (at < 0) return null;
 	const start = heads[at].index ?? 0;
@@ -66,14 +73,14 @@ export const excerptDocument = (text: string, opts: ExcerptOptions): Excerpted =
 	let scope = '';
 
 	if (opts.section) {
-		const found = sliceSection(text, opts.section);
+		const found = sliceSection(text, opts.section, opts.headingRe);
 		if (!found) {
-			const available = [...text.matchAll(SECTION_RE)].map((m) => m[1].trim());
+			const available = [...text.matchAll(opts.headingRe ?? SECTION_RE)].map((m) => m[1].trim());
 			return {
 				text: '',
 				note:
 					`No section matching "${opts.section}". Sections present: ` +
-					`${[...new Set(available)].join(', ') || 'none — this decision has no headings'}.`,
+					`${[...new Set(available)].join(', ') || 'none — this document has no headings'}.`,
 			};
 		}
 		body = found;
@@ -87,7 +94,7 @@ export const excerptDocument = (text: string, opts: ExcerptOptions): Excerpted =
 			return {
 				text: '',
 				note:
-					`"${opts.pattern}" does not appear in this decision${scope}. ` +
+					`"${opts.pattern}" does not appear in this document${scope}. ` +
 					`Do not cite it — search the text for what it does say instead.`,
 			};
 		}

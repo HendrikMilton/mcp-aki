@@ -24,6 +24,8 @@
     "build:lambda": "./scripts/build-lambda.sh",
     "crawl": "ts-node src/ingest/crawl.ts",
     "ingest": "ts-node src/ingest/build.ts",
-    "start": "ts-node src/local.ts"
+    "start": "ts-node src/local.ts",
+    "guidance": "ts-node src/ingest/guidance.ts",
+    "ingest:guidance": "ts-node src/ingest/build-guidance.ts"
   }
 }

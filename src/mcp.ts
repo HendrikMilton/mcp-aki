@@ -1,10 +1,11 @@
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
-import {AKI, RT, getDocText, loadIndex} from './lib/store';
+import {AKI, GUIDANCE, RT, getDocText, loadIndex} from './lib/store';
 import {excerptDocument} from './lib/excerpt';
+import {NUMBERED_HEADING_RE} from './lib/chunk';
 import {matchesFilters, search} from './lib/search';
 import {getStatute} from './lib/statute';
-import type {Category, CourtDoc, Doc} from './types';
+import type {Category, CourtDoc, Doc, GuidanceDoc} from './types';
 
 const CATEGORY_ENUM = z.enum(['ettekirjutused', 'vaideotsused', 'seisukohad']);
 
@@ -88,6 +89,39 @@ const coverage = (docs: {date?: string; year: number}[]): string => {
 	const from = Math.min(...years);
 	const to = Math.max(...years);
 	return `Corpus: ${docs.length} decisions, ${from}-${to}.`;
+};
+
+const GUIDANCE_TYPE_ENUM = z.enum(['juhend', 'kkk', 'news', 'muu']);
+
+const GUIDANCE_TYPE_LABELS: Record<string, string> = {
+	juhend: 'Juhend (guidance)',
+	kkk: 'KKK (FAQ)',
+	news: 'Uudis (news)',
+	muu: 'Muu leht (other page)',
+};
+
+const describeGuidanceDoc = (doc: GuidanceDoc): string =>
+	[
+		`[${doc.id}] ${doc.title}`,
+		`  ${GUIDANCE_TYPE_LABELS[doc.type] ?? doc.type} · ${doc.format.toUpperCase()}` +
+			(doc.year ? ` · ${doc.year}` : ''),
+		`  ${doc.url}`,
+	]
+		.filter(Boolean)
+		.join('\n');
+
+const summariseGuidanceDoc = (doc: GuidanceDoc): string =>
+	[`[${doc.id}]`, doc.year || '—', doc.type, truncate(doc.title, 70)].filter(Boolean).join(' · ');
+
+/** Guidance has no case numbers, so coverage is stated by document count and type mix. */
+const guidanceCoverage = (docs: GuidanceDoc[]): string => {
+	if (docs.length === 0) return 'Guidance index is empty.';
+	const byType = docs.reduce<Record<string, number>>((a, d) => {
+		a[d.type] = (a[d.type] ?? 0) + 1;
+		return a;
+	}, {});
+	const parts = Object.entries(byType).map(([t, n]) => `${n} ${t}`);
+	return `Corpus: ${docs.length} documents from aki.ee (${parts.join(', ')}).`;
 };
 
 export const buildMcpServer = (): McpServer => {
@@ -495,6 +529,157 @@ export const buildMcpServer = (): McpServer => {
 					isError: true,
 				};
 			}
+		},
+	);
+
+	// -------------------------------------------------------------------------
+	// Guidance — aki.ee itself: the regulator's manuals, FAQs and news
+	// -------------------------------------------------------------------------
+
+	server.registerTool(
+		'search_guidance',
+		{
+			title: "Search AKI guidance material",
+			description:
+				"Search the Data Protection Inspectorate's own guidance from aki.ee — the üldjuhendid " +
+				'(general manuals on AvTS and IKS), topic guides such as camera use and legitimate ' +
+				'interest, FAQ pages and attached PDFs. This is what the regulator says organisations ' +
+				'SHOULD do; it is advisory, not binding. For how a dispute was actually decided use ' +
+				'search_decisions (AKI) or search_court_decisions (courts). News is excluded unless you ' +
+				'pass type="news".',
+			inputSchema: {
+				query: z.string().describe('Search query, preferably in Estonian.'),
+				type: GUIDANCE_TYPE_ENUM.optional().describe(
+					'Restrict to one kind of page. Omit to search guidance, FAQs and other pages but not news.',
+				),
+				year_from: z.number().int().optional().describe('Earliest year, inclusive.'),
+				year_to: z.number().int().optional().describe('Latest year, inclusive.'),
+				top_k: z.number().int().min(1).max(25).optional().describe('Passages to return (default 8).'),
+			},
+		},
+		async ({query, type, year_from, year_to, top_k}) => {
+			const {index, bm25} = await loadIndex(GUIDANCE);
+			const hits = await search(
+				GUIDANCE,
+				index,
+				bm25,
+				query,
+				{type, yearFrom: year_from, yearTo: year_to},
+				// Over-fetch so the news filter below cannot empty a page of results.
+				type ? (top_k ?? 8) : Math.min((top_k ?? 8) * 3, 40),
+			);
+
+			// News is dated announcement copy and reads as current obligation when it surfaces in an
+			// answer, so it is filtered out here rather than at index time — it stays reachable.
+			const kept = (type ? hits : hits.filter((h) => h.doc.type !== 'news')).slice(0, top_k ?? 8);
+
+			if (kept.length === 0) {
+				return {content: [{type: 'text' as const, text: 'No matching guidance.'}]};
+			}
+
+			const text = kept
+				.map(
+					(hit, i) =>
+						`--- result ${i + 1} (relevance ${hit.score.toFixed(3)}) ---\n` +
+						`${describeGuidanceDoc(hit.doc)}\n` +
+						`  Section: ${hit.chunk.section}\n\n${hit.chunk.text}`,
+				)
+				.join('\n\n');
+
+			return {
+				content: [
+					{
+						type: 'text' as const,
+						text:
+							`${kept.length} passages from AKI guidance — advisory material, not binding ` +
+							`decisions. Excerpts only: confirm any quoted rule with get_guidance before ` +
+							`citing it.\n${guidanceCoverage(index.docs)}\n\n${text}`,
+					},
+				],
+			};
+		},
+	);
+
+	server.registerTool(
+		'get_guidance',
+		{
+			title: 'Get full AKI guidance document',
+			description:
+				'Fetch one guidance page or PDF by the id returned from search_guidance. Returns the full ' +
+				'text by default. **Call this before quoting a rule or a section number** — search ' +
+				'returns passages, not the whole document, and the manuals run to 150k characters. ' +
+				'Pass `pattern` to verify one citation, or `section` to read one numbered part.',
+			inputSchema: {
+				id: z.string().describe('Guidance id, e.g. "a1b2c3d4e5".'),
+				pattern: z
+					.string()
+					.optional()
+					.describe(
+						'Return only passages containing this literal text, with surrounding context. ' +
+							'If the pattern is absent the tool says so, which means the document does not say it.',
+					),
+				section: z
+					.string()
+					.optional()
+					.describe('Return only one section, matched on its numbered heading, e.g. "3.2".'),
+			},
+		},
+		async ({id, pattern, section}) => {
+			const {index} = await loadIndex(GUIDANCE);
+			const doc = index.docs.find((d) => d.id === id);
+			if (!doc) {
+				return {
+					content: [{type: 'text' as const, text: `Unknown guidance id: ${id}`}],
+					isError: true,
+				};
+			}
+			const {text, note} = excerptDocument(await getDocText(GUIDANCE, id), {
+				pattern,
+				section,
+				headingRe: NUMBERED_HEADING_RE,
+			});
+			return {
+				content: [
+					{
+						type: 'text' as const,
+						text: [describeGuidanceDoc(doc), note, text].filter(Boolean).join('\n\n'),
+					},
+				],
+			};
+		},
+	);
+
+	server.registerTool(
+		'list_guidance',
+		{
+			title: 'List AKI guidance documents',
+			description:
+				'List guidance documents by type and year, without searching. Use it to see what manuals ' +
+				'and FAQs exist, or to reach news, which search_guidance excludes by default.',
+			inputSchema: {
+				type: GUIDANCE_TYPE_ENUM.optional().describe('Restrict to one kind of page.'),
+				year_from: z.number().int().optional().describe('Earliest year, inclusive.'),
+				year_to: z.number().int().optional().describe('Latest year, inclusive.'),
+				limit: z.number().int().min(1).max(200).optional().describe('Maximum rows (default 50).'),
+			},
+		},
+		async ({type, year_from, year_to, limit}) => {
+			const {index} = await loadIndex(GUIDANCE);
+			const matched = index.docs.filter((d) =>
+				matchesFilters(d, {type, yearFrom: year_from, yearTo: year_to}),
+			);
+			if (matched.length === 0) {
+				return {content: [{type: 'text' as const, text: 'No guidance matches those filters.'}]};
+			}
+			const capped = matched.slice(0, limit ?? 50);
+			const body =
+				capped.length > COMPACT_THRESHOLD
+					? capped.map(summariseGuidanceDoc).join('\n')
+					: capped.map(describeGuidanceDoc).join('\n\n');
+			const header =
+				`${matched.length} documents match` +
+				(capped.length < matched.length ? `, showing ${capped.length}` : '');
+			return {content: [{type: 'text' as const, text: `${header}\n\n${body}`}]};
 		},
 	);
 

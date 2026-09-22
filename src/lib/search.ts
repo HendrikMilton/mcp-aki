@@ -1,4 +1,4 @@
-import type {Chunk, CourtDoc, Doc, Index} from '../types';
+import type {Chunk, CourtDoc, Doc, GuidanceDoc, Index} from '../types';
 import {EMBED_DIM, embed, rerank} from './bedrock';
 
 /**
@@ -131,6 +131,8 @@ export interface SearchFilters {
 	/** Court corpus only: procedure type and court tier. */
 	menetlus?: string;
 	tier?: string;
+	/** Guidance corpus only: juhend | kkk | news | muu. */
+	type?: string;
 }
 
 export interface Hit<D> {
@@ -152,6 +154,14 @@ export const chunkText = (doc: Doc | undefined, chunk: Chunk): string =>
  */
 export const courtChunkText = (doc: CourtDoc | undefined, chunk: Chunk): string =>
 	`${doc ? `${doc.nr} \u00b7 ${doc.court}` : ''} | ${chunk.section}\n${chunk.text}`;
+
+/**
+ * Guidance is retrieved by what it is about, and the document title carries that ("Juhend kaamerate
+ * kasutamise kohta"). The section label is the heading path inside the document, so a hit stays
+ * attributable to a numbered chapter rather than to a 150k-char PDF as a whole.
+ */
+export const guidanceChunkText = (doc: GuidanceDoc | undefined, chunk: Chunk): string =>
+	`${doc?.title ?? ''} | ${chunk.section}\n${chunk.text}`;
 
 /**
  * BM25 + dense in parallel, fused with RRF, then reranked. Neither leg alone is robust:
@@ -197,11 +207,14 @@ export interface FilterableDoc {
 	category?: string;
 	menetlus?: string;
 	tier?: string;
+	/** Guidance only: juhend | kkk | news | muu. */
+	type?: string;
 }
 
 export const matchesFilters = (doc: FilterableDoc, filters: SearchFilters): boolean => {
-	const {category, yearFrom, yearTo, norm, menetlus, tier} = filters;
+	const {category, yearFrom, yearTo, norm, menetlus, tier, type} = filters;
 	if (category && doc.category !== category) return false;
+	if (type && doc.type !== type) return false;
 	if (yearFrom && doc.year < yearFrom) return false;
 	if (yearTo && doc.year > yearTo) return false;
 	if (menetlus && doc.menetlus !== menetlus) return false;
