@@ -127,7 +127,17 @@ const guidanceCoverage = (docs: GuidanceDoc[]): string => {
 };
 
 export const buildMcpServer = (): McpServer => {
-	const server = new McpServer({name: 'eesti-andmekaitse', version: '2.0.0'});
+	const server = new McpServer(
+		{name: 'eesti-andmekaitse', version: '2.0.0'},
+		{
+			// Every result already carries its source URL; this makes the model pass it on, so the
+			// user can open the full document instead of trusting a paraphrase.
+			instructions:
+				'Whenever you cite, quote or summarise a document from these tools, give the user its ' +
+				'source URL from the tool result as a markdown link, next to the claim it supports. ' +
+				'Never invent or alter a URL; if a result has none, say so.',
+		},
+	);
 
 	// -------------------------------------------------------------------------
 	// AKI — the regulator's own decisions
