@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Search visualiser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<style>
+	:root { --bg:#fbfbfa; --fg:#1d1d1b; --muted:#6b6b66; --line:#e3e2de; --panel:#ffffff; --accent:#c2410c; }
+	@media (prefers-color-scheme: dark) { :root { --bg:#161615; --fg:#ecebe7; --muted:#9a9993; --line:#2e2e2b; --panel:#1f1f1d; --accent:#fb923c; } }
+	* { box-sizing: border-box; }
+	body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; }
+	header { display:flex; gap:12px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+	header h1 { font-size:15px; margin:0 12px 0 0; }
+	header .meta { color:var(--muted); font-size:12px; }
+	form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; flex:1; }
+	input, select, button { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--fg); }
+	#q { flex:1; min-width:260px; }
+	button { background:var(--accent); color:#fff; border:none; cursor:pointer; }
+	main { display:grid; grid-template-columns: minmax(0,1fr) 380px; height:calc(100vh - 56px); }
+	#map { min-height:0; }
+	aside { border-left:1px solid var(--line); overflow:auto; padding:12px 14px; background:var(--panel); }
+	aside h2 { font-size:13px; margin:14px 0 6px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+	#chunk pre { white-space:pre-wrap; font:12px/1.5 ui-monospace, monospace; margin:0; }
+	table { border-collapse:collapse; width:100%; font-size:12px; }
+	th, td { text-align:left; padding:3px 4px; border-bottom:1px solid var(--line); white-space:nowrap; }
+	td.doc { white-space:normal; }
+	tr { cursor:pointer; } tr:hover td { background:color-mix(in srgb, var(--accent) 12%, transparent); }
+	.legend span { display:inline-block; margin-right:10px; font-size:12px; }
+	.dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+	#status { color:var(--muted); font-size:12px; }
+	@media (max-width: 900px) { main { grid-template-columns:1fr; height:auto; } #map { height:70vh; } aside { border-left:none; border-top:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header>
+	<h1>Search visualiser</h1>
+	<form id="f">
+		<input id="q" placeholder="Query, e.g. töötaja jälgimine videokaameraga" autocomplete="off">
+		<input id="k" type="number" value="10" min="1" max="50" title="final results" style="width:64px">
+		<input id="yf" type="number" placeholder="year ≥" style="width:84px">
+		<input id="yt" type="number" placeholder="year ≤" style="width:84px">
+		<select id="color" title="colour the map by"></select>
+		<button>Trace</button>
+		<span id="status"></span>
+	</form>
+	<span class="meta" id="meta"></span>
+</header>
+<main>
+	<div id="map"></div>
+	<aside>
+		<div class="legend" id="legend"></div>
+		<h2>Candidates</h2>
+		<div id="table"><p class="meta">Run a query to see every chunk either leg found, and how far it got.</p></div>
+		<h2>Chunk</h2>
+		<div id="chunk"><p class="meta">Click a point or a row.</p></div>
+	</aside>
+</main>
+<script>
+const STAGES = [
+	{key:'lexical', name:'BM25 only', color:'#f59e0b'},
+	{key:'dense', name:'dense only', color:'#3b82f6'},
+	{key:'both', name:'both legs', color:'#8b5cf6'},
+	{key:'pool', name:'in rerank pool', color:'#10b981'},
+	{key:'final', name:'final result', color:'#dc2626'},
+];
+const PALETTE = ['#4e79a7','#f28e2b','#59a14f','#e15759','#76b7b2','#edc948','#b07aa1','#ff9da7','#9c755f','#86bcb6','#d37295','#a0cbe8'];
+let P, last = null;
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+const groupOf = (key, i) => {
+	const d = P.docs[P.doc[i]] || {};
+	if (key === 'section') return P.section[i];
+	if (key === 'decade') return d.year ? `${Math.floor(d.year / 5) * 5}–${Math.floor(d.year / 5) * 5 + 4}` : 'undated';
+	return d[key] ?? '—';
+};
+
+const baseTraces = (key) => {
+	const counts = {};
+	for (let i = 0; i < P.x.length; i++) { const g = groupOf(key, i); counts[g] = (counts[g] || 0) + 1; }
+	const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, PALETTE.length).map(([g]) => g);
+	const by = {};
+	for (let i = 0; i < P.x.length; i++) {
+		const g = groupOf(key, i); const name = top.includes(g) ? g : 'other';
+		(by[name] ||= []).push(i);
+	}
+	return Object.entries(by).map(([name, idx]) => ({
+		type:'scattergl', mode:'markers', name, x:idx.map(i => P.x[i]), y:idx.map(i => P.y[i]), customdata:idx,
+		text:idx.map(i => `${P.docs[P.doc[i]]?.label} · ${P.section[i]}`), hoverinfo:'text',
+		marker:{size:3, opacity: last ? 0.25 : 0.5, color: last || name === 'other' ? '#9ca3af' : PALETTE[top.indexOf(name)]},
+	}));
+};
+
+const stageOf = (c) => c.final ? 'final' : c.pool ? 'pool' : (c.dense && c.lexical) ? 'both' : c.dense ? 'dense' : 'lexical';
+
+const traceTraces = () => {
+	if (!last) return [];
+	const out = STAGES.map(s => {
+		const cs = last.candidates.filter(c => stageOf(c) === s.key);
+		const final = s.key === 'final';
+		return {
+			type:'scattergl', mode: final ? 'markers+text' : 'markers', name:s.name,
+			x:cs.map(c => P.x[c.chunk]), y:cs.map(c => P.y[c.chunk]), customdata:cs.map(c => c.chunk),
+			text: final ? cs.map(c => String(c.final)) : cs.map(c => `${c.doc} · ${c.section}`),
+			textposition:'top center', textfont:{color:s.color, size:12},
+			hovertext:cs.map(c => `${c.doc} · ${c.section}<br>dense ${c.dense ?? '–'} · bm25 ${c.lexical ?? '–'} · pool ${c.pool ?? '–'}${c.final ? ` · final ${c.final} (${c.rerank})` : ''}`),
+			hoverinfo:'text',
+			marker:{size: final ? 13 : s.key === 'pool' ? 9 : 6, color:s.color, symbol: final ? 'star' : 'circle',
+				line:{width: final ? 1 : 0, color:'#000'}},
+		};
+	});
+	if (last.at) out.push({type:'scattergl', mode:'markers', name:'query', x:[last.at[0]], y:[last.at[1]],
+		hoverinfo:'text', text:[`query: ${last.query}`], marker:{size:18, symbol:'x', color:css('--fg')}});
+	return out;
+};
+
+const draw = () => {
+	const key = document.getElementById('color').value;
+	const layout = {
+		margin:{l:10, r:10, t:10, b:10}, paper_bgcolor:css('--bg'), plot_bgcolor:css('--bg'), font:{color:css('--fg')},
+		xaxis:{visible:false}, yaxis:{visible:false, scaleanchor:'x'}, hovermode:'closest', dragmode:'pan',
+		legend:{bgcolor:'rgba(0,0,0,0)', font:{size:12}, itemsizing:'constant'},
+	};
+	Plotly.react('map', [...baseTraces(key), ...traceTraces()], layout, {responsive:true, scrollZoom:true, displaylogo:false});
+	document.getElementById('map').on('plotly_click', (e) => { const i = e.points[0]?.customdata; if (i != null) showChunk(i); });
+};
+
+const showChunk = async (i) => {
+	const c = await (await fetch(`/chunk?i=${i}`)).json();
+	const d = c.doc || {};
+	const link = d.url ? `<a href="${d.url}" target="_blank" rel="noopener">${d.nr ?? d.title ?? d.id}</a>` : (d.nr ?? d.title ?? d.id);
+	document.getElementById('chunk').innerHTML = `<p><b>${link}</b> · ${d.court ?? d.type ?? ''} · ${d.year ?? ''}<br><span class="meta">${c.section}</span></p><pre></pre>`;
+	document.querySelector('#chunk pre').textContent = c.text;
+};
+
+const renderTable = () => {
+	const rows = [...last.candidates].sort((a, b) => (a.final ?? 1e9) - (b.final ?? 1e9) || (a.pool ?? 1e9) - (b.pool ?? 1e9) || (a.dense ?? 1e9) - (b.dense ?? 1e9));
+	const esc = (s) => String(s).replace(/[&<>]/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+	document.getElementById('table').innerHTML =
+		`<p class="meta">${last.candidates.length} candidates · ${last.candidates.filter(c => c.pool).length} pooled · ${last.candidates.filter(c => c.final).length} returned</p>` +
+		`<table><tr><th>final</th><th>rerank</th><th>pool</th><th>dense</th><th>bm25</th><th>cos</th><th>decision · section</th></tr>` +
+		rows.slice(0, 200).map(c => `<tr data-i="${c.chunk}"><td>${c.final ?? ''}</td><td>${c.rerank ?? ''}</td><td>${c.pool ?? ''}</td><td>${c.dense ?? ''}</td><td>${c.lexical ?? ''}</td><td>${c.cosine}</td><td class="doc"><span class="dot" style="background:${STAGES.find(s => s.key === stageOf(c)).color}"></span>${esc(c.doc)} · ${esc(c.section)}</td></tr>`).join('') +
+		`</table>`;
+	document.querySelectorAll('#table tr[data-i]').forEach(tr => tr.onclick = () => showChunk(Number(tr.dataset.i)));
+};
+
+document.getElementById('f').onsubmit = async (e) => {
+	e.preventDefault();
+	const q = document.getElementById('q').value.trim(); if (!q) return;
+	const filters = {};
+	const yf = +document.getElementById('yf').value, yt = +document.getElementById('yt').value;
+	if (yf) filters.yearFrom = yf; if (yt) filters.yearTo = yt;
+	const status = document.getElementById('status'); status.textContent = 'searching…';
+	try {
+		const r = await fetch('/trace', {method:'POST', headers:{'content-type':'application/json'},
+			body: JSON.stringify({q, filters, topK: +document.getElementById('k').value || 10})});
+		if (!r.ok) throw new Error(await r.text());
+		last = await r.json(); status.textContent = '';
+		draw(); renderTable();
+	} catch (err) { status.textContent = `error: ${err.message}`; }
+};
+
+(async () => {
+	P = await (await fetch('/points')).json();
+	const keys = P.corpus === 'rt' ? ['menetlus','tier','decade','court','section'] : P.corpus === 'aki' ? ['category','decade','section'] : ['type','decade','section'];
+	document.getElementById('color').innerHTML = keys.map(k => `<option value="${k}">colour: ${k}</option>`).join('');
+	document.getElementById('color').onchange = draw;
+	document.getElementById('meta').textContent = `${P.corpus} · ${P.x.length.toLocaleString()} chunks · ${P.docs.length.toLocaleString()} docs · built ${P.builtAt.slice(0, 10)}`;
+	document.getElementById('legend').innerHTML = STAGES.map(s => `<span><span class="dot" style="background:${s.color}"></span>${s.name}</span>`).join('') + '<span>✕ query</span>';
+	draw();
+})();
+</script>
+</body>
+</html>
