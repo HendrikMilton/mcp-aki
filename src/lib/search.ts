@@ -176,6 +176,31 @@ export const search = async <D extends FilterableDoc>(
 	filters: SearchFilters,
 	topK_: number,
 ): Promise<Hit<D>[]> => {
+	const {final} = await searchTrace(corpus, index, bm25, query, filters, topK_);
+	const docById = new Map(index.docs.map((d) => [d.id, d]));
+	return final.map(({chunk: i, score}) => {
+		const chunk = index.chunks[i];
+		return {doc: docById.get(chunk.docId)!, chunk, score};
+	});
+};
+
+/** Every intermediate stage of one search, as chunk indices. The visualiser reads this. */
+export interface SearchTrace {
+	queryVec: number[];
+	dense: number[];
+	lexical: number[];
+	pool: number[];
+	final: {chunk: number; score: number}[];
+}
+
+export const searchTrace = async <D extends FilterableDoc>(
+	corpus: {chunkText: (doc: D | undefined, chunk: Chunk) => string},
+	index: Index<D>,
+	bm25: Bm25,
+	query: string,
+	filters: SearchFilters,
+	topK_: number,
+): Promise<SearchTrace> => {
 	const docById = new Map(index.docs.map((d) => [d.id, d]));
 	const allowed = buildFilterMask(index, filters);
 
@@ -185,7 +210,7 @@ export const search = async <D extends FilterableDoc>(
 	const dense = denseSearch(index, queryVec, LEG_DEPTH).filter((i) => allowed(i));
 
 	const pool = rrf([dense, lexical], RERANK_POOL);
-	if (pool.length === 0) return [];
+	if (pool.length === 0) return {queryVec, dense, lexical, pool, final: []};
 
 	const ranked = await rerank(
 		query,
@@ -193,10 +218,13 @@ export const search = async <D extends FilterableDoc>(
 		topK_,
 	);
 
-	return ranked.map(({index: p, score}) => {
-		const chunk = index.chunks[pool[p]];
-		return {doc: docById.get(chunk.docId)!, chunk, score};
-	});
+	return {
+		queryVec,
+		dense,
+		lexical,
+		pool,
+		final: ranked.map(({index: p, score}) => ({chunk: pool[p], score})),
+	};
 };
 
 /** The fields the filters read. Both corpora carry them; `category` is AKI-only. */

@@ -336,8 +336,8 @@ export const buildMcpServer = (): McpServer => {
 						{
 							type: 'text' as const,
 							text:
-								`No matching court decisions. ${coverage(index.docs)} Ingest is still in ` +
-								`progress and runs newest-first, so this does not mean no such case law ` +
+								`No matching court decisions. ${coverage(index.docs)} The corpus is ` +
+								`topic-filtered by a classifier, so this does not mean no such case law ` +
 								`exists — try different wording, then say the corpus did not cover it.`,
 						},
 					],
@@ -361,7 +361,7 @@ export const buildMcpServer = (): McpServer => {
 							`${hits.length} passages — excerpts only, not the whole decision. Before citing any ` +
 							`paragraph number or statute section, confirm it with get_court_decision ` +
 							`(pass a pattern to check one citation).\n` +
-							`${coverage(index.docs)} Ingest is still in progress and runs newest-first, so ` +
+							`${coverage(index.docs)} The corpus is topic-filtered by a classifier, so ` +
 							`absence here is not evidence that no such case law exists — say that rather ` +
 							`than concluding the courts have not ruled on it.\n\n${text}`,
 					},
