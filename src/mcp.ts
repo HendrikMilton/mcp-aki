@@ -299,13 +299,14 @@ export const buildMcpServer = (): McpServer => {
 		{
 			title: 'Search Estonian court decisions on data protection',
 			description:
-				'Search Estonian court decisions (Riigi Teataja) that substantively concern data ' +
-				'protection, privacy or the lawfulness of data processing — maakohus, ringkonnakohus and ' +
-				'Riigikohus. Hybrid keyword + semantic search with reranking; queries work in Estonian and ' +
-				'citations such as "IKÜM art 15", "AvTS § 35" or "KrMS § 214" match well. This is a ' +
-				'topic-filtered corpus, not all Estonian case law: every decision was classified as ' +
-				'substantively about data protection before being indexed. Use search_decisions for the ' +
-				"regulator's own practice.",
+				'Search Estonian court decisions (Riigi Teataja) that concern data protection, privacy or ' +
+				'the lawfulness of data processing — maakohus, ringkonnakohus and Riigikohus. Hybrid ' +
+				'keyword + semantic search with reranking; queries work in Estonian and citations such as ' +
+				'"IKÜM art 15", "AvTS § 35" or "KrMS § 214" match well. This is a topic-filtered corpus, ' +
+				'not all Estonian case law. The filter is deliberately inclusive, so some decisions touch ' +
+				'privacy only in passing (e.g. a prison complaint quoting the clause that lists private ' +
+				'life); judge relevance from the passage, not from its presence here. Use search_decisions ' +
+				"for the regulator's own practice.",
 			inputSchema: {
 				query: z.string().describe('Search query, preferably in Estonian.'),
 				menetlus: MENETLUS_ENUM.optional().describe('Restrict to one procedure type.'),
