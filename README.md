@@ -6,7 +6,7 @@ It serves **two corpora from one endpoint, as two separate tool sets**:
 | | corpus | tools |
 |---|---|---|
 | `aki` | the Data Protection Inspectorate's own decisions, built here | `search_decisions`, `get_decision`, `list_decisions` |
-| `rt` | data-protection decisions of the Estonian courts, built by `../mcp-rt` | `search_court_decisions`, `get_court_decision`, `list_court_decisions` |
+| `rt` | data-protection decisions of the Estonian courts, built by [mcp-rt](https://github.com/HendrikMilton/mcp-rt) | `search_court_decisions`, `get_court_decision`, `list_court_decisions` |
 
 The indexes stay separate on purpose. Merging would bury 657 AKI decisions under roughly ten times
 as much court text, and the two answer different questions — AKI is the regulator's own practice,
@@ -15,7 +15,7 @@ the courts are how those positions fared on review. Each corpus is a `Corpus<D>`
 caches them independently, so a Lambda container that only ever answers AKI questions never
 downloads the larger court index.
 
-The rest of this file describes the AKI corpus; see `../mcp-rt/README.md` for how the court corpus
+The rest of this file describes the AKI corpus; see the [mcp-rt README](https://github.com/HendrikMilton/mcp-rt#readme) for how the court corpus
 is selected, which is the hard part of that half.
 
 657 decisions across three categories — `ettekirjutused`, `vaideotsused`, `seisukohad` — 2021
